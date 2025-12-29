@@ -62,12 +62,15 @@ Enter new dump file (default dump.cs):
 ```
 GetOFFSET/
 │
-├── main.py           # Main script
-├── INPUT.txt         # Your input file with old offsets
-├── OUTPUT.txt        # Generated output with new offsets
-├── dump_old.cs       # Old IL2CPP dump
-├── dump.cs           # New IL2CPP dump
-└── README.md         # This file
+├── Dump.cs            # New IL2CPP dump
+├── Dump_old.cs        # Old IL2CPP dump
+├── INPUT/
+│   └── INPUT.txt     # Input file containing old offsets
+├── OUTPUT/
+│   └── OUTPUT.txt    # Generated output with new offsets
+├── Main.py            # Main script
+├── LICENSE            # License file
+└── README.md          # Project documentation
 ```
 
 ## 📝 Input Format
