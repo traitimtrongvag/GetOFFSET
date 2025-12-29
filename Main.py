@@ -6,6 +6,7 @@ INPUT_DIR = Path("INPUT")
 OUTPUT_DIR = Path("OUTPUT")
 INPUT_FILE = INPUT_DIR / "INPUT.txt"
 OUTPUT_FILE = OUTPUT_DIR / "OUTPUT.txt"
+ERROR_FILE = OUTPUT_DIR / "ERROR.txt"
 DEFAULT_OLD_DUMP = "Dump_old.cs"
 DEFAULT_NEW_DUMP = "Dump.cs"
 
@@ -99,6 +100,9 @@ def process_input(old_dump_path: Path, new_dump_path: Path):
     all_offsets = list(dict.fromkeys(OFFSET_PATTERN.findall("".join(input_lines))))
     mapped_offsets = map_offsets(old_dump_path, new_dump_path, all_offsets)
     
+    error_offsets = []
+    success_count = 0
+    
     with Progress() as progress, open(OUTPUT_FILE, "w", encoding="utf-8") as f_out:
         task = progress.add_task("[green]Processing input file...", total=len(input_lines))
         for line in input_lines:
@@ -112,6 +116,27 @@ def process_input(old_dump_path: Path, new_dump_path: Path):
     for old_offset, (new_offset, class_name, signature) in mapped_offsets.items():
         status = new_offset if new_offset else "NOT FOUND"
         print(f"{old_offset} -> {status}   [{class_name}] {signature}")
+        
+        if not new_offset:
+            error_offsets.append((old_offset, class_name, signature))
+        else:
+            success_count += 1
+    
+    if error_offsets:
+        with open(ERROR_FILE, "w", encoding="utf-8") as f_error:
+            f_error.write("ERROR OFFSETS - NOT FOUND\n")
+            f_error.write("=" * 80 + "\n\n")
+            for old_offset, class_name, signature in error_offsets:
+                f_error.write(f"{old_offset} -> NOT FOUND\n")
+                f_error.write(f"  Class: {class_name}\n")
+                f_error.write(f"  Signature: {signature}\n\n")
+        
+        print(f"\n[ERROR] {len(error_offsets)} offset(s) not found!")
+        print(f"[SUCCESS] {success_count} offset(s) mapped successfully!")
+        print(f"Error details saved to {ERROR_FILE}")
+    else:
+        print(f"\n[SUCCESS] {success_count} offset(s) mapped successfully!")
+        print("Congratulations! No errors found!")
     
     print(f"\nDone! Output saved to {OUTPUT_FILE}")
 
