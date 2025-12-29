@@ -1,97 +1,125 @@
 import re
+from pathlib import Path
 from rich.progress import Progress
 
-def clean_signature(str_sig: str) -> str:
-    str_sig = re.sub(r"^(?:public|private|protected|internal|static|virtual|sealed|extern|override|\s)+", "", str_sig)
-    str_sig = re.sub(r"^(?:System\.)?\w+\s+", "", str_sig, count=1)
-    str_sig = re.sub(r"<[^>]*>", "<>", str_sig)
-    str_sig = str_sig.strip().rstrip(";")
-    if not str_sig.endswith(")"):
-        str_sig += "()"
-    return str_sig.strip()
+INPUT_DIR = Path("INPUT")
+OUTPUT_DIR = Path("OUTPUT")
+INPUT_FILE = INPUT_DIR / "INPUT.txt"
+OUTPUT_FILE = OUTPUT_DIR / "OUTPUT.txt"
+DEFAULT_OLD_DUMP = "Dump_old.cs"
+DEFAULT_NEW_DUMP = "Dump.cs"
 
-def parse_dump(str_path: str):
-    g_offset_to_info = {}
-    g_info_to_offset = {}
-    g_class_stack = []
+CLASS_PATTERN = re.compile(
+    r"^\s*(?:public|private|internal|protected)?\s*"
+    r"(?:sealed\s+|static\s+|abstract\s+)?class\s+([\w\.<>\+]+)"
+)
+METHOD_PATTERN = re.compile(
+    r"^\s*(?:public|private|protected|internal).*?\)\s*;\s*//\s*(0x[0-9a-fA-F]+)"
+)
+OFFSET_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
-    m_class_pattern = re.compile(r"^\s*(?:public|private|internal|protected)?\s*(?:sealed\s+|static\s+|abstract\s+)?class\s+([\w\.<>\+]+)")
-    m_method_pattern = re.compile(r"^\s*(?:public|private|protected|internal).*?\)\s*;\s*//\s*(0x[0-9a-fA-F]+)")
+def clean_signature(signature: str) -> str:
+    signature = re.sub(
+        r"^(?:public|private|protected|internal|static|virtual|sealed|extern|override|\s)+",
+        "",
+        signature
+    )
+    signature = re.sub(r"^(?:System\.)?\w+\s+", "", signature, count=1)
+    signature = re.sub(r"<[^>]*>", "<>", signature)
+    signature = signature.strip().rstrip(";")
+    if not signature.endswith(")"):
+        signature += "()"
+    return signature.strip()
 
-    with open(str_path, "r", encoding="utf-8", errors="ignore") as f:
-        g_lines = f.readlines()
-
+def parse_dump(dump_path: Path):
+    offset_to_info = {}
+    info_to_offset = {}
+    class_stack = []
+    
+    with open(dump_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+    
     brace_depth = 0
+    
+    with Progress() as progress:
+        task = progress.add_task(f"[cyan]Parsing {dump_path.name}...", total=len(lines))
+        for line in lines:
+            class_match = CLASS_PATTERN.search(line)
+            if class_match:
+                class_name = class_match.group(1)
+                full_class = f"{class_stack[-1]}+{class_name}" if class_stack else class_name
+                class_stack.append(full_class)
+            
+            brace_depth += line.count("{") - line.count("}")
+            for _ in range(line.count("}")):
+                if class_stack and brace_depth < len(class_stack):
+                    class_stack.pop()
+            
+            if class_stack:
+                method_match = METHOD_PATTERN.search(line)
+                if method_match:
+                    current_class = class_stack[-1]
+                    signature = clean_signature(line.split("//")[0].strip())
+                    offset = method_match.group(1)
+                    offset_to_info[offset] = (current_class, signature)
+                    info_to_offset[(current_class, signature)] = offset
+            
+            progress.advance(task)
+    
+    return offset_to_info, info_to_offset
 
-    with Progress() as g_progress:
-        task = g_progress.add_task(f"[cyan]Parsing {str_path}...", total=len(g_lines))
-        for str_line in g_lines:
-            m_cls = m_class_pattern.search(str_line)
-            if m_cls:
-                cls_name = m_cls.group(1)
-                full_cls = f"{g_class_stack[-1]}+{cls_name}" if g_class_stack else cls_name
-                g_class_stack.append(full_cls)
-
-            brace_depth += str_line.count("{") - str_line.count("}")
-            for _ in range(str_line.count("}")):
-                if g_class_stack and brace_depth < len(g_class_stack):
-                    g_class_stack.pop()
-
-            if g_class_stack:
-                m_method = m_method_pattern.search(str_line)
-                if m_method:
-                    g_current_class = g_class_stack[-1]
-                    str_sig = clean_signature(str_line.split("//")[0].strip())
-                    g_offset = m_method.group(1)
-                    g_offset_to_info[g_offset] = (g_current_class, str_sig)
-                    g_info_to_offset[(g_current_class, str_sig)] = g_offset
-
-            g_progress.advance(task)
-
-    return g_offset_to_info, g_info_to_offset
-
-def map_offsets(str_old_dump: str, str_new_dump: str, g_offsets: list):
-    g_old_map, _ = parse_dump(str_old_dump)
-    _, g_new_map = parse_dump(str_new_dump)
-    g_results = {}
-
-    for g_off in g_offsets:
-        if g_off not in g_old_map:
-            g_results[g_off] = (None, None, None)
+def map_offsets(old_dump_path: Path, new_dump_path: Path, offsets: list):
+    old_map, _ = parse_dump(old_dump_path)
+    _, new_map = parse_dump(new_dump_path)
+    results = {}
+    
+    for offset in offsets:
+        if offset not in old_map:
+            results[offset] = (None, None, None)
             continue
-        g_cls, str_sig = g_old_map[g_off]
-        g_new_off = g_new_map.get((g_cls, str_sig))
-        if not g_new_off:
-            fallback_sig = re.sub(r"b__\d+_\d+", "b", str_sig)
-            g_new_off = g_new_map.get((g_cls, fallback_sig))
-        g_results[g_off] = (g_new_off, g_cls, str_sig)
+        
+        class_name, signature = old_map[offset]
+        new_offset = new_map.get((class_name, signature))
+        
+        if not new_offset:
+            fallback_signature = re.sub(r"b__\d+_\d+", "b", signature)
+            new_offset = new_map.get((class_name, fallback_signature))
+        
+        results[offset] = (new_offset, class_name, signature)
+    
+    return results
 
-    return g_results
-
-def process_input(str_input_file="INPUT.txt", str_output_file="OUTPUT.txt",
-                  str_old_dump="dump_old.cs", str_new_dump="dump.cs"):
-    with open(str_input_file, "r", encoding="utf-8", errors="ignore") as f:
-        g_input_lines = f.readlines()
-
-    g_all_offsets = list(dict.fromkeys(re.findall(r"0x[0-9a-fA-F]+", "".join(g_input_lines))))
-    g_mapped_offsets = map_offsets(str_old_dump, str_new_dump, g_all_offsets)
-
-    with Progress() as g_progress, open(str_output_file, "w", encoding="utf-8") as f_out:
-        task = g_progress.add_task("[green]Processing input file...", total=len(g_input_lines))
-        for str_line in g_input_lines:
-            def replace_offset(m):
-                g_off = m.group(0)
-                g_new_off, _, _ = g_mapped_offsets.get(g_off, (None, None, None))
-                return g_new_off if g_new_off else g_off
-            f_out.write(re.sub(r"0x[0-9a-fA-F]+", replace_offset, str_line))
-            g_progress.advance(task)
-
-    for g_old, (g_new, g_cls, str_sig) in g_mapped_offsets.items():
-        print(f"{g_old} -> {g_new if g_new else 'NOT FOUND'}   [{g_cls}] {str_sig}")
-
-    print(f"\nDone! Output saved to {str_output_file}")
+def process_input(old_dump_path: Path, new_dump_path: Path):
+    INPUT_DIR.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    
+    with open(INPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
+        input_lines = f.readlines()
+    
+    all_offsets = list(dict.fromkeys(OFFSET_PATTERN.findall("".join(input_lines))))
+    mapped_offsets = map_offsets(old_dump_path, new_dump_path, all_offsets)
+    
+    with Progress() as progress, open(OUTPUT_FILE, "w", encoding="utf-8") as f_out:
+        task = progress.add_task("[green]Processing input file...", total=len(input_lines))
+        for line in input_lines:
+            def replace_offset(match):
+                offset = match.group(0)
+                new_offset, _, _ = mapped_offsets.get(offset, (None, None, None))
+                return new_offset if new_offset else offset
+            f_out.write(OFFSET_PATTERN.sub(replace_offset, line))
+            progress.advance(task)
+    
+    for old_offset, (new_offset, class_name, signature) in mapped_offsets.items():
+        status = new_offset if new_offset else "NOT FOUND"
+        print(f"{old_offset} -> {status}   [{class_name}] {signature}")
+    
+    print(f"\nDone! Output saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    str_old_dump = input("Enter old dump file (default dump_old.cs): ").strip() or "dump_old.cs"
-    str_new_dump = input("Enter new dump file (default dump.cs): ").strip() or "dump.cs"
-    process_input("INPUT.txt", "OUTPUT.txt", str_old_dump, str_new_dump)
+    old_dump_input = input(f"Enter old dump file (default {DEFAULT_OLD_DUMP}): ").strip()
+    new_dump_input = input(f"Enter new dump file (default {DEFAULT_NEW_DUMP}): ").strip()
+    
+    old_dump_path = Path(old_dump_input) if old_dump_input else Path(DEFAULT_OLD_DUMP)
+    new_dump_path = Path(new_dump_input) if new_dump_input else Path(DEFAULT_NEW_DUMP)
+    
+    process_input(old_dump_path, new_dump_path)
