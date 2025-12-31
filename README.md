@@ -47,7 +47,7 @@ pip install rich
 
 2. **Run the tool:**
 ```bash
-python Main.py
+python3 Main.py
 ```
 
 3. **Follow the prompts:**
