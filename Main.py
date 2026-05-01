@@ -25,12 +25,25 @@ def clean_signature(signature: str) -> str:
         "",
         signature
     )
-    signature = re.sub(r"^(?:System\.)?\w+\s+", "", signature, count=1)
-    signature = re.sub(r"<[^>]*>", "<>", signature)
+    signature = re.sub(r"^(?:System\.)?[\w\.]+\s+", "", signature, count=1)
     signature = signature.strip().rstrip(";")
     if not signature.endswith(")"):
         signature += "()"
-    return signature.strip()
+    return signature
+
+def extract_lambda_info(signature: str):
+    match = re.match(r"<([^>]+)>b__(\d+)(?:_(\d+))?\(\)", signature)
+    if match:
+        container = match.group(1)
+        index = int(match.group(2))
+        return container, index
+    return None, None
+
+def normalize_lambda(signature: str) -> str:
+    container, _ = extract_lambda_info(signature)
+    if container:
+        return f"<{container}>b__()"
+    return signature
 
 def parse_dump(dump_path: Path):
     offset_to_info = {}
@@ -69,6 +82,19 @@ def parse_dump(dump_path: Path):
     
     return offset_to_info, info_to_offset
 
+def find_best_lambda_match(class_name, old_container, old_index, new_map):
+    candidates = []
+    for (cls, sig), offset in new_map.items():
+        if cls != class_name:
+            continue
+        container, index = extract_lambda_info(sig)
+        if container == old_container:
+            candidates.append((index, offset, sig))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: abs(x[0] - old_index))
+    return candidates[0][1]
+
 def map_offsets(old_dump_path: Path, new_dump_path: Path, offsets: list):
     old_map, _ = parse_dump(old_dump_path)
     _, new_map = parse_dump(new_dump_path)
@@ -83,8 +109,15 @@ def map_offsets(old_dump_path: Path, new_dump_path: Path, offsets: list):
         new_offset = new_map.get((class_name, signature))
         
         if not new_offset:
-            fallback_signature = re.sub(r"b__\d+_\d+", "b", signature)
-            new_offset = new_map.get((class_name, fallback_signature))
+            container, index = extract_lambda_info(signature)
+            if container is not None:
+                new_offset = find_best_lambda_match(class_name, container, index, new_map)
+            else:
+                norm_old = normalize_lambda(signature)
+                for (cls, sig), off in new_map.items():
+                    if cls == class_name and normalize_lambda(sig) == norm_old:
+                        new_offset = off
+                        break
         
         results[offset] = (new_offset, class_name, signature)
     
