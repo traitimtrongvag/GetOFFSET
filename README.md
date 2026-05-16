@@ -122,8 +122,6 @@ public void Update() // 0x12345678
 
 Because manually updating offsets is like trying to teach a cat to code...
 
-![Cat Typing](https://media.giphy.com/media/o0vwzuFwCGAFO/giphy.gif)
-
 *Technically possible, but you'll lose your sanity* 😹
 
 ## 🤝 Contributing
